@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لعبة أهل القرية - أونلاين</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+            transition: background-color 0.6s ease, color 0.6s ease;
+        }
+        .theme-night {
+            background: radial-gradient(circle at top, #0f172a 0%, #020617 100%);
+        }
+        .theme-day {
+            background: radial-gradient(circle at top, #1e293b 0%, #0f172a 100%);
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body class="theme-night text-slate-100 min-h-screen flex flex-col">
+
+    <!-- شريط التنبيهات العلوية -->
+    <div id="toast" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 hidden bg-red-600 text-white px-6 py-3 rounded-xl shadow-2xl font-bold text-sm transition-all"></div>
+
+    <!-- نافذة إعلانات الصباح ونتائج شيخ القرية -->
+    <div id="modalOverlay" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 text-center shadow-2xl">
+            <div id="modalIcon" class="text-5xl mb-3">🌅</div>
+            <h3 id="modalTitle" class="text-xl font-bold text-amber-400 mb-2">تقرير القرية</h3>
+            <p id="modalBody" class="text-slate-200 leading-relaxed mb-6"></p>
+            <button onclick="closeModal()" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-8 py-2.5 rounded-xl transition">حسناً</button>
+        </div>
+    </div>
+
+    <!-- 1. شاشة البداية (الدخول أو إنشاء غرفة) -->
+    <div id="homeScreen" class="flex-1 flex items-center justify-center p-4">
+        <div class="bg-slate-900/90 border border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl backdrop-blur">
+            <div class="text-center mb-8">
+                <div class="text-6xl mb-3">🐺🏮</div>
+                <h1 class="text-3xl font-black text-amber-400">أهل القرية</h1>
+                <p class="text-slate-400 text-sm mt-1">لعبة الخداع والاستنتاج الاجتماعي أونلاين</p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">اسمك في القرية</label>
+                    <input id="playerNameInput" type="text" placeholder="أدخل اسمك هنا..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-400">
+                </div>
+
+                <button onclick="createRoom()" class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-3.5 rounded-xl shadow-lg transition">
+                    + إنشاء غرفة جديدة
+                </button>
+
+                <div class="relative flex py-2 items-center">
+                    <div class="flex-grow border-t border-slate-800"></div>
+                    <span class="flex-shrink mx-4 text-slate-500 text-xs">أو انضم لأصدقائك</span>
+                    <div class="flex-grow border-t border-slate-800"></div>
+                </div>
+
+                <div class="flex gap-2">
+                    <input id="roomCodeInput" type="text" placeholder="كود الغرفة (مثال: A7X9)" class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white uppercase text-center tracking-widest focus:outline-none focus:border-indigo-400">
+                    <button onclick="joinRoom()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition">
+                        انضمام
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. شاشة اللعب والغرفة -->
+    <div id="gameScreen" class="hidden flex-1 flex flex-col max-w-7xl w-full mx-auto p-3 md:p-6 gap-4">
+        
+        <!-- الشريط العلوي (معلومات الغرفة والمؤقت) -->
+        <header class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-4">
+                <div class="bg-slate-800 px-4 py-2 rounded-xl border border-slate-700">
+                    <span class="text-xs text-slate-400 block">كود الغرفة</span>
+                    <span id="displayRoomCode" class="font-black text-xl text-amber-400 tracking-widest">----</span>
+                </div>
+                <div>
+                    <h2 id="phaseTitle" class="font-bold text-lg text-white">ردهة الانتظار</h2>
+                    <p id="phaseSubtitle" class="text-xs text-slate-400">في انتظار اكتمال العدد (5 لاعبين على الأقل)</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <div id="myRoleBadge" class="hidden bg-indigo-950/80 border border-indigo-700 px-4 py-2 rounded-xl text-right">
+                    <span class="text-xs text-indigo-300 block">دورك السري</span>
+                    <span id="myRoleName" class="font-bold text-sm text-white">---</span>
+                </div>
+
+                <div id="timerBox" class="bg-slate-800 border border-slate-700 w-16 h-16 rounded-2xl flex flex-col items-center justify-center">
+                    <span id="timerValue" class="font-black text-2xl text-amber-400">--</span>
+                    <span class="text-[10px] text-slate-400">ثانية</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- المحتوى الرئيسي -->
+        <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4">
+            
+            <!-- العمود الأيمن: اللاعبون والأدوار -->
+            <div class="lg:col-span-7 flex flex-col gap-4">
+                
+                <!-- بطاقة شرح الدور عند بدء اللعبة -->
+                <div id="roleRevealCard" class="hidden bg-gradient-to-br from-indigo-950 to-slate-900 border-2 border-indigo-500/40 rounded-2xl p-5 shadow-xl">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300" id="revealTeamBadge">فريق القرية</span>
+                        <span id="sniperAmmoBadge" class="hidden text-xs bg-amber-500/20 text-amber-300 px-3 py-1 rounded-full font-bold">الذخيرة: 1 طلقة 🎯</span>
+                    </div>
+                    <h3 id="revealRoleTitle" class="text-2xl font-black text-white mb-1">شيخ القرية</h3>
+                    <p id="revealRoleDesc" class="text-sm text-slate-300 leading-relaxed"></p>
+                    <div id="mafiaTeammatesBox" class="hidden mt-3 pt-3 border-t border-rose-500/30 text-xs text-rose-300">
+                        <strong>أفراد عصابتك: </strong> <span id="mafiaTeammatesList"></span>
+                    </div>
+                </div>
+
+                <!-- قسم التحكم في الـ Lobby أو أثناء اللعب -->
+                <div id="actionBanner" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                    <span id="actionInstruction" class="text-sm font-semibold text-amber-300">بانتظار مدير الغرفة لبدء اللعبة...</span>
+                    <div class="flex gap-2">
+                        <button id="startGameBtn" onclick="startGame()" class="hidden bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-6 py-2 rounded-xl text-sm transition">
+                            بدء اللعبة الآن ▶
+                        </button>
+                        <button id="skipNightBtn" onclick="submitNightAction(null)" class="hidden bg-slate-700 hover:bg-slate-600 text-white font-bold px-4 py-2 rounded-xl text-xs transition">
+                            عدم استخدام القدرة هذه الليلة
+                        </button>
+                        <button id="skipDiscussBtn" onclick="voteSkipDiscussion()" class="hidden bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-xl text-xs transition">
+                            تخطي النقاش والتصويت فوراً (<span id="skipDiscussCounter">0</span>)
+                        </button>
+                        <button id="skipVoteBtn" onclick="submitDayVote('skip')" class="hidden bg-slate-700 hover:bg-slate-600 text-white font-bold px-4 py-2 rounded-xl text-xs transition">
+                            تخطي الإعدام (<span id="skipVoteCounter">0</span>)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- شبكة اللاعبين -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex-1">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-bold text-slate-300 text-sm">قائمة اللاعبين في القرية</h3>
+                        <span id="aliveCounter" class="text-xs text-slate-400">الأحياء: 0</span>
+                    </div>
+                    <div id="playersGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+                </div>
+            </div>
+
+            <!-- العمود الأيسر: الدردشة وسجل الأحداث -->
+            <div class="lg:col-span-5 flex flex-col gap-4 h-[550px] lg:h-auto">
+                
+                <!-- صندوق الشات (العام أو السري للعصابة) -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex-1 flex flex-col min-h-[320px]">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+                        <h3 id="chatHeaderTitle" class="font-bold text-sm text-white">💬 نقاش القرية العام</h3>
+                        <span id="chatStatusBadge" class="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400">مغلق حالياً</span>
+                    </div>
+
+                    <div id="chatMessages" class="flex-1 overflow-y-auto space-y-2 pr-1 text-sm mb-3"></div>
+
+                    <!-- أزرار الإيماءات السريعة للاعب المسكت بواسطة الساكت -->
+                    <div id="mutedGesturesBar" class="hidden bg-rose-950/60 border border-rose-800 rounded-xl p-2.5 mb-2">
+                        <p class="text-xs text-rose-300 font-bold mb-2">🤐 أنت ممنوع من الكلام بأمر الساكت! يمكنك إرسال إشارة واحدة فقط:</p>
+                        <div class="flex flex-wrap gap-1.5">
+                            <button onclick="sendGesture('أنا بريء والله! 👋')" class="bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1.5 rounded-lg">أنا بريء 👋</button>
+                            <button onclick="sendGesture('تم إسكاتي لأني كشفت خيطاً مهماً! 👀')" class="bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1.5 rounded-lg">كشفت خيطاً 👀</button>
+                            <button onclick="sendGesture('ركزوا في تصويتات الأمس! 🤔')" class="bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1.5 rounded-lg">ركزوا في الأمس 🤔</button>
+                        </div>
+                    </div>
+
+                    <form id="chatForm" onsubmit="handleChatSubmit(event)" class="flex gap-2">
+                        <input id="chatInput" type="text" placeholder="اكتب رسالتك هنا..." disabled class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-amber-400 disabled:opacity-50">
+                        <button id="chatSendBtn" type="submit" disabled class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-5 py-2.5 rounded-xl text-sm transition disabled:opacity-50">
+                            إرسال
+                        </button>
+                    </form>
+                </div>
+
+                <!-- سجل أحداث اللعبة (Game Log) -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 h-48 flex flex-col">
+                    <h3 class="font-bold text-xs text-slate-400 mb-2">📜 سجل أحداث القرية</h3>
+                    <div id="gameLogs" class="flex-1 overflow-y-auto space-y-1.5 text-xs text-slate-300 pr-1"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. نافذة نهاية اللعبة (Game Over Modal) -->
+    <div id="gameOverModal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 text-center shadow-2xl">
+            <div id="winEmoji" class="text-6xl mb-2">🏆</div>
+            <h2 id="winTitle" class="text-3xl font-black text-amber-400 mb-1">فاز أهل القرية!</h2>
+            <p id="winReason" class="text-sm text-slate-300 mb-6"></p>
+
+            <div class="bg-slate-800/80 rounded-2xl p-4 mb-6 max-h-60 overflow-y-auto text-right">
+                <h4 class="text-xs font-bold text-slate-400 mb-2">كشف الهويات الحقيقية للاعبين:</h4>
+                <div id="finalRolesList" class="space-y-2 text-sm"></div>
+            </div>
+
+            <button id="restartBtn" onclick="restartLobby()" class="hidden w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3 rounded-xl transition">
+                لعب جولة جديدة في نفس الغرفة 🔄
+            </button>
+            <p id="waitHostRestartMsg" class="text-xs text-slate-400 mt-2">بانتظار مدير الغرفة لبدء جولة جديدة...</p>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentState = null;
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.remove('hidden');
+            setTimeout(() => t.classList.add('hidden'), 3500);
+        }
+
+        function showModal(title, body, icon = '🌅') {
+            document.getElementById('modalIcon').textContent = icon;
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalBody').textContent = body;
+            const overlay = document.getElementById('modalOverlay');
+            overlay.classList.remove('hidden');
+            overlay.classList.add('flex');
+        }
+
+        function closeModal() {
+            const overlay = document.getElementById('modalOverlay');
+            overlay.classList.add('hidden');
+            overlay.classList.remove('flex');
+        }
+
+        function createRoom() {
+            const playerName = document.getElementById('playerNameInput').value;
+            socket.emit('createRoom', { playerName });
+        }
+
+        function joinRoom() {
+            const playerName = document.getElementById('playerNameInput').value;
+            const roomCode = document.getElementById('roomCodeInput').value;
+            socket.emit('joinRoom', { playerName, roomCode });
+        }
+
+        function startGame() {
+            socket.emit('startGame');
+        }
+
+        function submitNightAction(targetId) {
+            socket.emit('nightAction', { targetId });
+        }
+
+        function submitDayVote(targetId) {
+            socket.emit('dayVote', { targetId });
+        }
+
+        function voteSkipDiscussion() {
+            socket.emit('voteSkipDiscussion');
+        }
+
+        function sendGesture(gestureText) {
+            socket.emit('sendMutedGesture', { gestureText });
+        }
+
+        function restartLobby() {
+            socket.emit('restartLobby');
+        }
+
+        function handleChatSubmit(e) {
+            e.preventDefault();
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text || !currentState) return;
+
+            const channel = (currentState.phase === 'NIGHT' && currentState.myInfo.team === 'mafia') ? 'mafia' : 'public';
+            socket.emit('sendMessage', { text, channel });
+            input.value = '';
+        }
+
+        // استقبال تحديثات الغرفة
+        socket.on('roomState', (state) => {
+            currentState = state;
+            document.getElementById('homeScreen').classList.add('hidden');
+            document.getElementById('gameScreen').classList.remove('hidden');
+            if (state.phase === 'LOBBY') {
+                document.getElementById('gameOverModal').classList.add('hidden');
+                document.getElementById('gameOverModal').classList.remove('flex');
+            }
+
+            // تحديث الثيم (ليل / نهار)
+            if (state.phase === 'NIGHT' || state.phase === 'LOBBY') {
+                document.body.className = 'theme-night text-slate-100 min-h-screen flex flex-col';
+            } else {
+                document.body.className = 'theme-day text-slate-100 min-h-screen flex flex-col';
+            }
+
+            document.getElementById('displayRoomCode').textContent = state.code;
+            document.getElementById('timerValue').textContent = state.timer > 0 ? state.timer : '--';
+            document.getElementById('aliveCounter').textContent = `الأحياء: ${state.aliveCount} من ${state.players.length}`;
+
+            renderHeaderAndRole(state);
+            renderActionBanner(state);
+            renderPlayersGrid(state);
+            renderChatConfig(state);
+        });
+
+        socket.on('timerTick', (time) => {
+            document.getElementById('timerValue').textContent = time > 0 ? time : '--';
+        });
+
+        socket.on('errorMsg', (msg) => showToast(msg));
+
+        socket.on('morningModal', (report) => {
+            showModal('أخبار القرية', report, '🌅');
+        });
+
+        socket.on('seerResult', ({ targetName, result }) => {
+            showModal('كشف شيخ القرية 🔮', `نتيجة فحصك السري للاعب ( ${targetName} ) هي: [ ${result} ]`, '🔮');
+        });
+
+        socket.on('newLog', (log) => {
+            const container = document.getElementById('gameLogs');
+            const div = document.createElement('div');
+            const colorClass = log.type === 'important' ? 'text-amber-400 font-bold' : (log.type === 'phase' ? 'text-indigo-300 font-semibold' : 'text-slate-400');
+            div.className = `${colorClass} leading-relaxed`;
+            div.textContent = `[${log.time}] ${log.message}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        });
+
+        socket.on('chatMessage', ({ sender, text, channel }) => {
+            const container = document.getElementById('chatMessages');
+            const div = document.createElement('div');
+            if (channel === 'mafia') {
+                div.className = 'bg-rose-950/70 border border-rose-800/60 rounded-xl p-2.5 text-rose-200';
+                div.innerHTML = `<span class="font-bold text-rose-400">[شات العصابة 🔪] ${sender}:</span> ${text}`;
+            } else if (channel === 'gesture') {
+                div.className = 'bg-amber-950/50 border border-amber-700/50 rounded-xl p-2.5 text-amber-200';
+                div.innerHTML = `<span class="font-bold text-amber-400">${sender}:</span> ${text}`;
+            } else {
+                div.className = 'bg-slate-800/80 rounded-xl p-2.5 text-slate-200';
+                div.innerHTML = `<span class="font-bold text-indigo-400">${sender}:</span> ${text}`;
+            }
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        });
+
+        socket.on('gameOver', ({ winner, reason, players }) => {
+            const modal = document.getElementById('gameOverModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+
+            document.getElementById('winEmoji').textContent = winner === 'village' ? '🎉🛡️' : '😈🔪';
+            document.getElementById('winTitle').textContent = winner === 'village' ? 'انتصر أهل القرية!' : 'سيطرت العصابة على القرية!';
+            document.getElementById('winReason').textContent = reason;
+
+            const list = document.getElementById('finalRolesList');
+            list.innerHTML = '';
+            players.forEach(p => {
+                const badgeColor = p.team === 'mafia' ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+                list.innerHTML += `
+                    <div class="flex items-center justify-between bg-slate-900/70 px-3 py-2 rounded-xl border border-slate-700/50">
+                        <span class="font-bold ${p.isAlive ? 'text-white' : 'line-through text-slate-500'}">${p.name}</span>
+                        <span class="text-xs px-2.5 py-1 rounded-lg border ${badgeColor}">${p.roleName}</span>
+                    </div>
+                `;
+            });
+
+            if (currentState && currentState.myInfo.isHost) {
+                document.getElementById('restartBtn').classList.remove('hidden');
+                document.getElementById('waitHostRestartMsg').classList.add('hidden');
+            } else {
+                document.getElementById('restartBtn').classList.add('hidden');
+                document.getElementById('waitHostRestartMsg').classList.remove('hidden');
+            }
+        });
+
+        function renderHeaderAndRole(state) {
+            const phaseTitles = {
+                LOBBY: ['ردهة الانتظار', 'بانتظار تجمع اللاعبين (الحد الأدنى 5 لاعبين)'],
+                ROLE_REVEAL: ['كشف الهويات السرية', 'احفظ دورك جيداً قبل حلول الظلام'],
+                NIGHT: [`الليلة ${state.dayCount} 🌙`, 'القرية نائمة.. أصحاب القدرات ينفذون مهامهم سراً'],
+                MORNING_ANNOUNCEMENT: [`صباح اليوم ${state.dayCount} 🌅`, 'إعلان أحداث الليلة الماضية'],
+                DISCUSSION: [`النقاش النهاري (اليوم ${state.dayCount}) ☀️`, 'تناقشوا لكشف الخونة قبل بدء التصويت'],
+                VOTING: [`مرحلة التصويت ⚖️`, 'صوّت على المشتبه به لإعدامه أو اختر تخطي الإعدام'],
+                GAME_OVER: ['انتهت اللعبة 🏆', 'تم كشف جميع الحقائق']
+            };
+
+            const [title, sub] = phaseTitles[state.phase] || ['أهل القرية', ''];
+            document.getElementById('phaseTitle').textContent = title;
+            document.getElementById('phaseSubtitle').textContent = sub;
+
+            const myInfo = state.myInfo;
+            const roleCard = document.getElementById('roleRevealCard');
+            const badge = document.getElementById('myRoleBadge');
+
+            if (myInfo.role && myInfo.roleInfo) {
+                badge.classList.remove('hidden');
+                roleCard.classList.remove('hidden');
+                document.getElementById('myRoleName').textContent = myInfo.roleInfo.name;
+                document.getElementById('revealRoleTitle').textContent = myInfo.roleInfo.name;
+                document.getElementById('revealRoleDesc').textContent = myInfo.roleInfo.desc;
+
+                const teamBadge = document.getElementById('revealTeamBadge');
+                if (myInfo.team === 'mafia') {
+                    teamBadge.textContent = 'فريق العصابة 🔪';
+                    teamBadge.className = 'text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-rose-500/20 text-rose-300';
+                } else {
+                    teamBadge.textContent = 'فريق أهل القرية 🛡️';
+                    teamBadge.className = 'text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300';
+                }
+
+                const sniperBadge = document.getElementById('sniperAmmoBadge');
+                if (myInfo.role === 'sniper') {
+                    sniperBadge.classList.remove('hidden');
+                    sniperBadge.textContent = `الذخيرة: ${myInfo.ammo} طلقة 🎯`;
+                } else {
+                    sniperBadge.classList.add('hidden');
+                }
+
+                const matesBox = document.getElementById('mafiaTeammatesBox');
+                if (myInfo.team === 'mafia' && myInfo.mafiaTeammates.length > 0) {
+                    matesBox.classList.remove('hidden');
+                    document.getElementById('mafiaTeammatesList').textContent = myInfo.mafiaTeammates
+                        .map(m => `${m.name} (${m.roleName})`).join(' ، ');
+                } else {
+                    matesBox.classList.add('hidden');
+                }
+            } else {
+                badge.classList.add('hidden');
+                roleCard.classList.add('hidden');
+            }
+        }
+
+        function renderActionBanner(state) {
+            const myInfo = state.myInfo;
+            const startBtn = document.getElementById('startGameBtn');
+            const skipNightBtn = document.getElementById('skipNightBtn');
+            const skipDiscussBtn = document.getElementById('skipDiscussBtn');
+            const skipVoteBtn = document.getElementById('skipVoteBtn');
+            const instruction = document.getElementById('actionInstruction');
+
+            startBtn.classList.add('hidden');
+            skipNightBtn.classList.add('hidden');
+            skipDiscussBtn.classList.add('hidden');
+            skipVoteBtn.classList.add('hidden');
+
+            if (state.phase === 'LOBBY') {
+                if (myInfo.isHost) {
+                    startBtn.classList.remove('hidden');
+                    instruction.textContent = `أنت مدير الغرفة. العدد الحالي (${state.players.length}/5 كحد أدنى).`;
+                } else {
+                    instruction.textContent = 'في انتظار مدير الغرفة لبدء اللعبة...';
+                }
+                return;
+            }
+
+            if (!myInfo.isAlive) {
+                instruction.textContent = '💀 لقد خرجت من اللعبة.. يمكنك متابعة الأحداث بصمت كمشاهد.';
+                return;
+            }
+
+            if (state.phase === 'NIGHT') {
+                if (myInfo.role === 'villager') {
+                    instruction.textContent = '😴 أنت مواطن عادي.. انتظر حتى يشرق الصباح.';
+                } else if (myInfo.hasSubmittedNight) {
+                    instruction.textContent = '✅ تم تسجيل قرارك الليلي بنجاح.. بانتظار بقية الأدوار.';
+                } else {
+                    instruction.textContent = '🎯 اختر أحد اللاعبين من القائمة بالأسفل لتنفيذ قدرتك الليلية!';
+                    if (myInfo.role === 'sniper') {
+                        skipNightBtn.classList.remove('hidden');
+                    }
+                }
+            } else if (state.phase === 'DISCUSSION') {
+                instruction.textContent = '🗣️ وقت النقاش مفتوح.. حللوا المواقف لكشف العصابة.';
+                skipDiscussBtn.classList.remove('hidden');
+                document.getElementById('skipDiscussCounter').textContent = `${state.skipDiscussCount}/${Math.floor(state.aliveCount / 2) + 1}`;
+            } else if (state.phase === 'VOTING') {
+                instruction.textContent = '⚖️ صوّت على الشخص الأكثر إثارة للشك لإعدامه!';
+                skipVoteBtn.classList.remove('hidden');
+                document.getElementById('skipVoteCounter').textContent = state.skipVotes;
+            } else {
+                instruction.textContent = 'استعد للمرحلة القادمة...';
+            }
+        }
+
+        function renderPlayersGrid(state) {
+            const grid = document.getElementById('playersGrid');
+            grid.innerHTML = '';
+            const myInfo = state.myInfo;
+
+            state.players.forEach(p => {
+                const isMe = p.id === myInfo.id;
+                const card = document.createElement('div');
+                card.className = `p-3.5 rounded-2xl border flex items-center justify-between transition ${
+                    !p.isAlive ? 'bg-slate-950/50 border-slate-800/60 opacity-50' : 'bg-slate-800/90 border-slate-700'
+                }`;
+
+                let badges = '';
+                if (p.isHost) badges += `<span class="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-md mr-1">المدير 👑</span>`;
+                if (isMe) badges += `<span class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-md mr-1">أنت</span>`;
+                if (!p.isAlive) badges += `<span class="text-[10px] bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-md mr-1">ميت 💀</span>`;
+                if (p.isAlive && p.isMuted) badges += `<span class="text-[10px] bg-rose-500/30 text-rose-300 px-2 py-0.5 rounded-md mr-1">مُسكت 🤐</span>`;
+
+                let actionButton = '';
+
+                // أزرار الليل لأصحاب القدرات
+                if (state.phase === 'NIGHT' && myInfo.isAlive && !myInfo.hasSubmittedNight && p.isAlive) {
+                    if ((myInfo.role === 'boss' || myInfo.role === 'mafia') && p.id !== myInfo.id) {
+                        actionButton = `<button onclick="submitNightAction('${p.id}')" class="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl">اغتيال 🔪</button>`;
+                    } else if (myInfo.role === 'silencer' && p.id !== myInfo.id) {
+                        const disabled = p.id === myInfo.lastMutedId ? 'disabled opacity-40' : '';
+                        actionButton = `<button ${disabled} onclick="submitNightAction('${p.id}')" class="bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl">إسكات 🤐</button>`;
+                    } else if (myInfo.role === 'doctor') {
+                        const disabled = p.id === myInfo.lastHealedId ? 'disabled opacity-40' : '';
+                        actionButton = `<button ${disabled} onclick="submitNightAction('${p.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl">حماية 💉</button>`;
+                    } else if (myInfo.role === 'seer' && p.id !== myInfo.id) {
+                        actionButton = `<button onclick="submitNightAction('${p.id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl">فحص 🔍</button>`;
+                    } else if (myInfo.role === 'sniper' && p.id !== myInfo.id && myInfo.ammo > 0) {
+                        actionButton = `<button onclick="submitNightAction('${p.id}')" class="bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl">قنص 🎯</button>`;
+                    }
+                }
+
+                // أزرار التصويت النهاري
+                if (state.phase === 'VOTING' && myInfo.isAlive && p.isAlive && p.id !== myInfo.id) {
+                    actionButton = `<button onclick="submitDayVote('${p.id}')" class="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl">تصويت (${p.votesReceived})</button>`;
+                } else if (state.phase === 'VOTING' && p.isAlive) {
+                    actionButton = `<span class="text-xs text-amber-400 font-bold">الأصوات: ${p.votesReceived}</span>`;
+                }
+
+                card.innerHTML = `
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-9 h-9 rounded-xl bg-slate-700 flex items-center justify-center font-bold text-sm text-amber-400">
+                            ${p.name.charAt(0)}
+                        </div>
+                        <div>
+                            <div class="font-bold text-sm text-white flex items-center flex-wrap gap-1">
+                                <span>${p.name}</span>
+                                ${badges}
+                            </div>
+                        </div>
+                    </div>
+                    <div>${actionButton}</div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function renderChatConfig(state) {
+            const myInfo = state.myInfo;
+            const input = document.getElementById('chatInput');
+            const sendBtn = document.getElementById('chatSendBtn');
+            const headerTitle = document.getElementById('chatHeaderTitle');
+            const statusBadge = document.getElementById('chatStatusBadge');
+            const mutedBar = document.getElementById('mutedGesturesBar');
+
+            mutedBar.classList.add('hidden');
+
+            if (!myInfo.isAlive) {
+                input.disabled = true;
+                sendBtn.disabled = true;
+                input.placeholder = 'الأموات لا يتحدثون...';
+                statusBadge.textContent = 'وضع المشاهدة 💀';
+                return;
+            }
+
+            if (state.phase === 'NIGHT') {
+                if (myInfo.team === 'mafia') {
+                    headerTitle.textContent = '🔪 شات العصابة السري';
+                    statusBadge.textContent = 'متصل سراً';
+                    input.disabled = false;
+                    sendBtn.disabled = false;
+                    input.placeholder = 'نسّق مع عصابتك لاختيار الضحية...';
+                } else {
+                    headerTitle.textContent = '💬 نقاش القرية العام';
+                    statusBadge.textContent = 'مغلق ليلاً 🌙';
+                    input.disabled = true;
+                    sendBtn.disabled = true;
+                    input.placeholder = 'الشات مغلق أثناء الليل...';
+                }
+            } else if (state.phase === 'DISCUSSION' || state.phase === 'VOTING') {
+                headerTitle.textContent = '💬 نقاش القرية العام';
+                if (myInfo.isMuted) {
+                    statusBadge.textContent = 'ممنوع من الكلام 🤐';
+                    input.disabled = true;
+                    sendBtn.disabled = true;
+                    input.placeholder = 'أنت ممنوع من الكلام هذا اليوم بأمر الساكت!';
+                    if (!myInfo.usedGesture) {
+                        mutedBar.classList.remove('hidden');
+                    }
+                } else {
+                    statusBadge.textContent = 'مفتوح الآن 🟢';
+                    input.disabled = false;
+                    sendBtn.disabled = false;
+                    input.placeholder = 'اكتب رسالتك لأهل القرية...';
+                }
+            } else {
+                input.disabled = true;
+                sendBtn.disabled = true;
+                statusBadge.textContent = 'مغلق مؤقتاً';
+                input.placeholder = 'بانتظار بدء النقاش...';
+            }
+        }
+    </script>
+</body>
+</html>
